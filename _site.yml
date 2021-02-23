@@ -10,5 +10,5 @@ navbar:
       href: BeerProject.html
     - text: "Bank Deposits (Logistic Regression)"
       href: BankDeposits.html
-    - text: "Life Expectancy (Random Forest)"
+    - text: "Life Expectancy (Data Cleansing & Random Forest)"
       href: Life-Expectancy.html
