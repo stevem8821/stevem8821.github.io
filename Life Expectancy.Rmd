@@ -1,0 +1,605 @@
+---
+title: "Global Life Expectancy Prediction Using Random Forest"
+author: "Steven Mann"
+date: "9/28/2020"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Read in Life Expectancy Data from Kaggle}
+#Life Expectancy Data from Kaggle
+Life = read.csv(file.choose(),header = TRUE)
+```
+
+```{r Load Libraries}
+library(Amelia)
+library(tidyverse)
+library(DataCombine)
+```
+
+```{r See what data is missing}
+missmap(Life)
+```
+
+#We see Population is biggest missing value. See if we can find that data on UN website.
+#Population Data downloaded from the UN
+#URL https://population.un.org/wpp/Download/Standard/Population/
+
+```{r Read in Demographic Data from UN Database}
+UNPOP = read.csv(file.choose(),header=TRUE)
+```
+
+```{r Filter and Select Columns for imputing}
+#filter UN data set down to size
+#Grab only columns of interest
+UNPOP2 = data.frame(Country = UNPOP$Location,Year = UNPOP$Time,Population = UNPOP$PopTotal*1000)
+#Filter to only time frame of interest
+UNPOPclean = UNPOP2 %>% filter(Year >= 2000 & Year <= 2015)
+```
+
+#Initially planned to replace only N/A values from original dataset. However, an inspection of the dataset
+#reveals that many population factors clearly aren't correct. An inspection of just the first 2 countries 
+#in the list, Afghanistan and Albania, reveal that year-over-year popluation fluctuations are by multiples or
+#divisions of 10x or 100x. Decided instead to replace the entire population data with data obtained from the 
+#UN population database.
+
+```{r Check if any missing values in the UN Data}
+#No Missing Values
+missmap(UNPOPclean)
+```
+
+#Some country names do not match our other data set. This will mess with the merge.
+#Rename countries to fit with our dataset Using FindReplace function
+
+```{r Merging in Complete Population Data}
+#Create Data frame to replace country names
+Replace = data.frame(from = c("Dem. People's Republic of Korea","Micronesia \\(Fed. States of\\)",
+                              "Eswatini","North Macedonia","United Kingdom"), 
+                     to = c("Democratic People's Republic of Korea","Micronesia \\(Federated States of\\)",
+                            "Swaziland","The former Yugoslav republic of Macedonia",
+                            "United Kingdom of Great Britain and Northern Ireland"))
+
+#Replace Country Names
+UNPOPclean2 = FindReplace(data = UNPOPclean,Var = "Country",replaceData = Replace,
+                          from = "from",to = "to",exact = FALSE)
+
+#Merge Clean Population Data into our dataset
+Lifeclean = left_join(Life, UNPOPclean2, by = c("Country", "Year"))
+
+#Delete old Population Column
+Lifeclean2 = Lifeclean[,-19]
+
+#Rename Column
+Lifeclean3 = Lifeclean2 %>% rename("Population" = Population.y)
+
+#Filter out N/A Life Expectancies
+Lifeclean3 = Lifeclean3 %>% filter(is.na(Life.expectancy) == "FALSE")
+
+#Sanity Check - All good!
+missmap(Lifeclean3)
+```
+
+
+```{r Merging in Complete GDP Data}
+##Same issues with GDP 
+##Get data from UN
+## URL http://data.un.org/Data.aspx?d=SNAAMA&f=grID%3a101%3bcurrID%3aUSD%3bpcFlag%3a0%3bitID%3a9
+##filtered on the front-end to only include 2000 - 2015
+
+GDP = read.csv(file.choose(),header = TRUE)
+
+#Rename Columns
+GDP2 = data.frame(Country = GDP$Country.or.Area,Year = GDP$Year,GDP = GDP$Value)
+
+#Some country names do not match our other data set. This will mess with the merge.
+#Rename countries to fit with our dataset Using FindReplace function
+
+#Create Data frame to replace country names
+Replace2 = data.frame(from = c("China, People's Republic of",
+                               "Iran, Islamic Republic of","Kingdom of Eswatini",
+                               "Republic of North Macedonia","United States",
+                               "United Republic of Tanzania: Mainland","Former Sudan"), 
+                      to = c("China","Iran \\(Islamic Republic of\\)","Swaziland",
+                             "The former Yugoslav republic of Macedonia","United States of America","United Republic of Tanzania","Sudan"))
+
+#Replace Country Names
+GDP3 = FindReplace(data = GDP2,Var = "Country",replaceData = Replace2,
+                   from = "from",to = "to",exact = FALSE)
+
+#Join Dataset with new GDP data
+Lifeclean4 = left_join(Lifeclean3, GDP3, by = c("Country", "Year"))
+
+#Delete old GDP Column
+Lifeclean5 = Lifeclean4[,-18]
+
+#Rename Column
+Lifeclean6 = Lifeclean5 %>% rename("GDP" = GDP.y)
+
+#Remaining N/A's are Niue, & South Sudan. South Sudan didn't exist prior to 2008. Niue only has 1 year of data in original dataset. Reasonable.
+Lifeclean6 %>% filter(is.na(GDP)==TRUE)
+
+#Sanity checks
+summary(Lifeclean6$Population)
+summary(Lifeclean6$GDP)
+```
+
+```{r Impute other missing values}
+#See what else is missing
+missmap(Lifeclean6)
+
+##Compute Median Hepatitis B by Country
+HepBCountry = Lifeclean6 %>% 
+  filter(is.na(Hepatitis.B) == "FALSE") %>% 
+  group_by(Country) %>% 
+  summarize(MedianHBCountry = median(Hepatitis.B))
+
+##Compute Median Hepatitis B by Continent
+HepBContinent = Lifeclean6 %>% 
+  filter(is.na(Hepatitis.B) == "FALSE") %>%
+  group_by(Continent) %>%
+  summarize(MedianHBContinent = median(Hepatitis.B))
+
+#Merge Medians by Continent
+Lifeclean7 <- merge(x = Lifeclean6,y = HepBContinent,by = "Continent",all.x = TRUE)
+
+#Merge Medians by Country
+Lifeclean8 <- merge(x = Lifeclean7,y = HepBCountry,by = "Country",all.x = TRUE)
+
+#If statement to cascade which median to use: Non-N/A Value > Country Median
+Lifeclean9 = within(Lifeclean8, 
+       HepB1 <- 
+         ifelse(is.na(Hepatitis.B)=="TRUE",
+                MedianHBCountry,
+              Hepatitis.B))
+
+#If statement to cascade which median to use: Non-N/A value > Country Median > Continent Median
+## Could be more efficient, but couldn't get nested ifelse to work
+Lifeclean10 = within(Lifeclean9, 
+                    HepBFinal <- 
+                      ifelse(is.na(HepB1)=="TRUE",
+                             MedianHBContinent,
+                             HepB1))
+
+#Drop Unneeded Columns
+Lifeclean11 = select(Lifeclean10,-c(Hepatitis.B,MedianHBContinent,MedianHBCountry,HepB1))
+
+##SanityCheck
+missmap(Lifeclean11)
+
+##Compute Median by Country
+ExpCountry = Lifeclean11 %>% 
+  filter(is.na(Total.expenditure) == "FALSE") %>% 
+  group_by(Country) %>% 
+  summarize(MedianexpCountry = median(Total.expenditure))
+
+##Compute Median by Continent
+ExpContinent = Lifeclean11 %>% 
+  filter(is.na(Total.expenditure) == "FALSE") %>%
+  group_by(Continent) %>%
+  summarize(MedianexpContinent = median(Total.expenditure))
+
+#Merge Medians by Continent
+Lifeclean12 <- merge(x = Lifeclean11,y = ExpContinent,by = "Continent",all.x = TRUE)
+
+#Merge Medians by Country
+Lifeclean13 <- merge(x = Lifeclean12,y = ExpCountry,by = "Country",all.x = TRUE)
+
+#If statement to cascade which median to use: Non-N/A Value > Country Median
+Lifeclean14 = within(Lifeclean13, 
+                    Exp1 <- 
+                      ifelse(is.na(Total.expenditure)=="TRUE",
+                             MedianexpCountry,
+                             Total.expenditure))
+
+#If statement to cascade which median to use: Non-N/A value > Country Median > Continent Median
+## Could be more efficient, but couldn't get nested ifelse to work
+Lifeclean15 = within(Lifeclean14, 
+                     Total.expenditureFinal <- 
+                       ifelse(is.na(Exp1)=="TRUE",
+                              MedianexpContinent,
+                              Exp1))
+
+#Drop Unneeded Columns
+Lifeclean16 = select(Lifeclean15,-c(Total.expenditure,MedianexpContinent,MedianexpCountry,Exp1))
+
+##SanityCheck
+missmap(Lifeclean16)
+
+##Compute Median by Country
+AlcCountry = Lifeclean16 %>% 
+  filter(is.na(Alcohol) == "FALSE") %>% 
+  group_by(Country) %>% 
+  summarize(MedianAlcCountry = median(Alcohol))
+
+##Compute Median by Continent
+AlcContinent = Lifeclean16 %>% 
+  filter(is.na(Alcohol) == "FALSE") %>%
+  group_by(Continent) %>%
+  summarize(MedianAlcContinent = median(Alcohol))
+
+#Merge Medians by Continent
+Lifeclean17 <- merge(x = Lifeclean16,y = AlcContinent,by = "Continent",all.x = TRUE)
+
+#Merge Medians by Country
+Lifeclean18 <- merge(x = Lifeclean17,y = AlcCountry,by = "Country",all.x = TRUE)
+
+#If statement to cascade which median to use: Non-N/A Value > Country Median
+Lifeclean19 = within(Lifeclean18, 
+                     Alc1 <- 
+                       ifelse(is.na(Alcohol)=="TRUE",
+                              MedianAlcCountry,
+                              Alcohol))
+
+#If statement to cascade which median to use: Non-N/A value > Country Median > Continent Median
+## Could be more efficient, but couldn't get nested ifelse to work
+Lifeclean20 = within(Lifeclean19, 
+                     AlcoholFinal <- 
+                       ifelse(is.na(Alc1)=="TRUE",
+                              MedianAlcContinent,
+                              Alc1))
+
+#Drop Unneeded Columns
+Lifeclean21 = select(Lifeclean20,-c(Alcohol,MedianAlcContinent,MedianAlcCountry,Alc1))
+
+##SanityCheck
+missmap(Lifeclean21)
+
+##Compute Median by Country
+IncCountry = Lifeclean21 %>% 
+  filter(is.na(Income.composition.of.resources) == "FALSE") %>% 
+  group_by(Country) %>% 
+  summarize(MedianIncCountry = median(Income.composition.of.resources))
+
+##Compute Median by Continent
+IncContinent = Lifeclean21 %>% 
+  filter(is.na(Income.composition.of.resources) == "FALSE") %>% 
+  group_by(Continent) %>% 
+  summarize(MedianIncContinent = median(Income.composition.of.resources))
+
+#Merge Medians by Continent
+Lifeclean22 <- merge(x = Lifeclean21,y = IncContinent,by = "Continent",all.x = TRUE)
+
+#Merge Medians by Country
+Lifeclean23 <- merge(x = Lifeclean22,y = IncCountry,by = "Country",all.x = TRUE)
+
+#If statement to cascade which median to use: Non-N/A Value > Country Median
+Lifeclean24 = within(Lifeclean23, 
+                     Inc1 <- 
+                       ifelse(is.na(Income.composition.of.resources)=="TRUE",
+                              MedianIncCountry,
+                              Income.composition.of.resources))
+
+#If statement to cascade which median to use: Non-N/A value > Country Median > Continent Median
+## Could be more efficient, but couldn't get nested ifelse to work
+Lifeclean25 = within(Lifeclean24, 
+                     IncomeFinal <- 
+                       ifelse(is.na(Inc1)=="TRUE",
+                              MedianIncContinent,
+                              Inc1))
+
+#Drop Unneeded Columns
+Lifeclean26 = select(Lifeclean25,-c(Income.composition.of.resources,MedianIncContinent,MedianIncCountry,Inc1))
+
+##SanityCheck
+missmap(Lifeclean26)
+
+##Compute Median by Country
+SchoolCountry = Lifeclean26 %>% 
+  filter(is.na(Schooling) == "FALSE") %>% 
+  group_by(Country) %>% 
+  summarize(MedianSchoolCountry = median(Schooling))
+
+##Compute Median by Continent
+SchoolContinent = Lifeclean26 %>% 
+  filter(is.na(Schooling) == "FALSE") %>% 
+  group_by(Continent) %>% 
+  summarize(MedianSchoolContinent = median(Schooling))
+
+#Merge Medians by Continent
+Lifeclean27 <- merge(x = Lifeclean26,y = SchoolContinent,by = "Continent",all.x = TRUE)
+
+#Merge Medians by Country
+Lifeclean28 <- merge(x = Lifeclean27,y = SchoolCountry,by = "Country",all.x = TRUE)
+
+#If statement to cascade which median to use: Non-N/A Value > Country Median
+Lifeclean29 = within(Lifeclean28, 
+                     School1 <- 
+                       ifelse(is.na(Schooling)=="TRUE",
+                              MedianSchoolCountry,
+                              Schooling))
+
+#If statement to cascade which median to use: Non-N/A value > Country Median > Continent Median
+## Could be more efficient, but couldn't get nested ifelse to work
+Lifeclean30 = within(Lifeclean29, 
+                     SchoolFinal <- 
+                       ifelse(is.na(School1)=="TRUE",
+                              MedianSchoolContinent,
+                              School1))
+
+#Drop Unneeded Columns
+Lifeclean31 = select(Lifeclean30,-c(Schooling,MedianSchoolContinent,MedianSchoolCountry,School1))
+
+##SanityCheck
+missmap(Lifeclean31)
+
+##Compute Median by Country
+Thin5Country = Lifeclean31 %>% 
+  filter(is.na(thinness.5.9.years) == "FALSE") %>% 
+  group_by(Country) %>% 
+  summarize(MedianThin5Country = median(thinness.5.9.years))
+
+##Compute Median by Continent
+Thin5Continent = Lifeclean31 %>% 
+  filter(is.na(thinness.5.9.years) == "FALSE") %>% 
+  group_by(Continent) %>% 
+  summarize(MedianThin5Continent = median(thinness.5.9.years))
+
+#Merge Medians by Continent
+Lifeclean32 <- merge(x = Lifeclean31,y = Thin5Continent,by = "Continent",all.x = TRUE)
+
+#Merge Medians by Country
+Lifeclean33 <- merge(x = Lifeclean32,y = Thin5Country,by = "Country",all.x = TRUE)
+
+#If statement to cascade which median to use: Non-N/A Value > Country Median
+Lifeclean34 = within(Lifeclean33, 
+                     Thin51 <- 
+                       ifelse(is.na(thinness.5.9.years)=="TRUE",
+                              MedianThin5Country,
+                              thinness.5.9.years))
+
+#If statement to cascade which median to use: Non-N/A value > Country Median > Continent Median
+## Could be more efficient, but couldn't get nested ifelse to work
+Lifeclean35 = within(Lifeclean34, 
+                     Thin5Final <- 
+                       ifelse(is.na(Thin51)=="TRUE",
+                              MedianThin5Continent,
+                              Thin51))
+
+#Drop Unneeded Columns
+Lifeclean36 = select(Lifeclean35,-c(thinness.5.9.years,MedianThin5Continent,MedianThin5Country,Thin51))
+
+##SanityCheck
+missmap(Lifeclean36)
+
+##Compute Median by Country
+Thin10Country = Lifeclean36 %>% 
+  filter(is.na(thinness..1.19.years) == "FALSE") %>% 
+  group_by(Country) %>% 
+  summarize(MedianThin10Country = median(thinness..1.19.years))
+
+##Compute Median by Continent
+Thin10Continent = Lifeclean36 %>% 
+  filter(is.na(thinness..1.19.years) == "FALSE") %>% 
+  group_by(Continent) %>% 
+  summarize(MedianThin10Continent = median(thinness..1.19.years))
+
+#Merge Medians by Continent
+Lifeclean37 <- merge(x = Lifeclean36,y = Thin10Continent,by = "Continent",all.x = TRUE)
+
+#Merge Medians by Country
+Lifeclean38 <- merge(x = Lifeclean37,y = Thin10Country,by = "Country",all.x = TRUE)
+
+#If statement to cascade which median to use: Non-N/A Value > Country Median
+Lifeclean39 = within(Lifeclean38, 
+                     Thin101 <- 
+                       ifelse(is.na(thinness..1.19.years)=="TRUE",
+                              MedianThin10Country,
+                              thinness..1.19.years))
+
+#If statement to cascade which median to use: Non-N/A value > Country Median > Continent Median
+## Could be more efficient, but couldn't get nested ifelse to work
+Lifeclean40 = within(Lifeclean39, 
+                     Thin10Final <- 
+                       ifelse(is.na(Thin101)=="TRUE",
+                              MedianThin10Continent,
+                              Thin101))
+
+#Drop Unneeded Columns
+Lifeclean41 = select(Lifeclean40,-c(thinness..1.19.years,MedianThin10Continent,MedianThin10Country,Thin101))
+
+##SanityCheck
+missmap(Lifeclean41)
+
+##Compute Median by Country
+Thin10Country = Lifeclean36 %>% 
+  filter(is.na(thinness..1.19.years) == "FALSE") %>% 
+  group_by(Country) %>% 
+  summarize(MedianThin10Country = median(thinness..1.19.years))
+
+##Compute Median by Continent
+Thin10Continent = Lifeclean36 %>% 
+  filter(is.na(thinness..1.19.years) == "FALSE") %>% 
+  group_by(Continent) %>% 
+  summarize(MedianThin10Continent = median(thinness..1.19.years))
+
+#Merge Medians by Continent
+Lifeclean37 <- merge(x = Lifeclean36,y = Thin10Continent,by = "Continent",all.x = TRUE)
+
+#Merge Medians by Country
+Lifeclean38 <- merge(x = Lifeclean37,y = Thin10Country,by = "Country",all.x = TRUE)
+
+#If statement to cascade which median to use: Non-N/A Value > Country Median
+Lifeclean39 = within(Lifeclean38, 
+                     Thin101 <- 
+                       ifelse(is.na(thinness..1.19.years)=="TRUE",
+                              MedianThin10Country,
+                              thinness..1.19.years))
+
+#If statement to cascade which median to use: Non-N/A value > Country Median > Continent Median
+## Could be more efficient, but couldn't get nested ifelse to work
+Lifeclean40 = within(Lifeclean39, 
+                     Thin10Final <- 
+                       ifelse(is.na(Thin101)=="TRUE",
+                              MedianThin10Continent,
+                              Thin101))
+
+#Drop Unneeded Columns
+Lifeclean41 = select(Lifeclean40,-c(thinness..1.19.years,MedianThin10Continent,MedianThin10Country,Thin101))
+
+##SanityCheck
+missmap(Lifeclean41)
+
+##Compute Median by Country
+BMICountry = Lifeclean41 %>% 
+  filter(is.na(BMI) == "FALSE") %>% 
+  group_by(Country) %>% 
+  summarize(MedianBMICountry = median(BMI))
+
+##Compute Median by Continent
+BMIContinent = Lifeclean41 %>% 
+  filter(is.na(BMI) == "FALSE") %>% 
+  group_by(Continent) %>% 
+  summarize(MedianBMIContinent = median(BMI))
+
+#Merge Medians by Continent
+Lifeclean42 <- merge(x = Lifeclean41,y = BMIContinent,by = "Continent",all.x = TRUE)
+
+#Merge Medians by Country
+Lifeclean43 <- merge(x = Lifeclean42,y = BMICountry,by = "Country",all.x = TRUE)
+
+#If statement to cascade which median to use: Non-N/A Value > Country Median
+Lifeclean44 = within(Lifeclean43, 
+                     BMI1 <- 
+                       ifelse(is.na(BMI)=="TRUE",
+                              MedianBMICountry,
+                              BMI))
+
+#If statement to cascade which median to use: Non-N/A value > Country Median > Continent Median
+## Could be more efficient, but couldn't get nested ifelse to work
+Lifeclean45 = within(Lifeclean44, 
+                     BMIFinal <- 
+                       ifelse(is.na(BMI1)=="TRUE",
+                              MedianBMIContinent,
+                              BMI1))
+
+#Drop Unneeded Columns
+Lifeclean46 = select(Lifeclean45,-c(BMI,MedianBMIContinent,MedianBMICountry,BMI1))
+
+##SanityCheck
+missmap(Lifeclean46)
+
+##Compute Median by Country
+DiptheriaCountry = Lifeclean46 %>% 
+  filter(is.na(Diphtheria) == "FALSE") %>% 
+  group_by(Country) %>% 
+  summarize(MedianDiptheriaCountry = median(Diphtheria))
+
+##Compute Median by Continent
+DiptheriaContinent = Lifeclean46 %>% 
+  filter(is.na(Diphtheria) == "FALSE") %>% 
+  group_by(Continent) %>% 
+  summarize(MedianDiptheriaContinent = median(Diphtheria))
+
+#Merge Medians by Continent
+Lifeclean47 <- merge(x = Lifeclean46,y = DiptheriaContinent,by = "Continent",all.x = TRUE)
+
+#Merge Medians by Country
+Lifeclean48 <- merge(x = Lifeclean47,y = DiptheriaCountry,by = "Country",all.x = TRUE)
+
+#If statement to cascade which median to use: Non-N/A Value > Country Median
+Lifeclean49 = within(Lifeclean48, 
+                     Dip1 <- 
+                       ifelse(is.na(Diphtheria)=="TRUE",
+                              MedianDiptheriaCountry,
+                              Diphtheria))
+
+#If statement to cascade which median to use: Non-N/A value > Country Median > Continent Median
+## Could be more efficient, but couldn't get nested ifelse to work
+Lifeclean50 = within(Lifeclean49, 
+                     DiptheriaFinal <- 
+                       ifelse(is.na(Dip1)=="TRUE",
+                              MedianDiptheriaContinent,
+                              Dip1))
+
+#Drop Unneeded Columns
+Lifeclean51 = select(Lifeclean50,-c(Diphtheria,MedianDiptheriaContinent,MedianDiptheriaCountry,Dip1))
+
+##SanityCheck
+missmap(Lifeclean51)
+
+##Compute Median by Country
+PolioCountry = Lifeclean51 %>% 
+  filter(is.na(Polio) == "FALSE") %>% 
+  group_by(Country) %>% 
+  summarize(MedianPolioCountry = median(Polio))
+
+##Compute Median by Continent
+PolioContinent = Lifeclean51 %>% 
+  filter(is.na(Polio) == "FALSE") %>% 
+  group_by(Continent) %>% 
+  summarize(MedianPolioContinent = median(Polio))
+
+#Merge Medians by Continent
+Lifeclean52 <- merge(x = Lifeclean51,y = PolioContinent,by = "Continent",all.x = TRUE)
+
+#Merge Medians by Country
+Lifeclean53 <- merge(x = Lifeclean52,y = PolioCountry,by = "Country",all.x = TRUE)
+
+#If statement to cascade which median to use: Non-N/A Value > Country Median
+Lifeclean54 = within(Lifeclean53, 
+                     Polio1 <- 
+                       ifelse(is.na(Polio)=="TRUE",
+                              MedianPolioCountry,
+                              Polio))
+
+#If statement to cascade which median to use: Non-N/A value > Country Median > Continent Median
+## Could be more efficient, but couldn't get nested ifelse to work
+Lifeclean55 = within(Lifeclean54, 
+                     PolioFinal <- 
+                       ifelse(is.na(Polio1)=="TRUE",
+                              MedianPolioContinent,
+                              Polio1))
+
+#Drop Unneeded Columns
+Lifeclean56 = select(Lifeclean55,-c(Polio,MedianPolioContinent,MedianPolioCountry,Polio1))
+
+##SanityCheck
+missmap(Lifeclean56)
+
+#Change Column Names back to Original
+names(Lifeclean56) <- c("Country","Continent","Year","Status","Life.expectancy","Adult.Mortality","infant.deaths",
+                        "percentage.expenditure","Measles","under.five.deaths","HIV.AIDS","Population","GDP",
+                        "Hepatitis.B","Total.expenditure","Alcohol","Income.composition.of.resources",
+                        "Schooling","thinness.5.9.years","thinness..1.19.years","BMI","Diphtheria","Polio")
+
+#Create Final Dataset
+LifeFinal = Lifeclean56
+
+#Final Sanity Check - only N/A's relate to South Sudan's GDP (Wasn't a country prior to 2008). All set!
+missmap(LifeFinal)
+LifeFinal %>% filter(is.na(GDP)=="TRUE")
+```
+
+
+##Life Expectancy Random Forest
+
+```{r Create the Random Forest Model}
+#Load Libraries
+library(randomForest)
+library(tree)
+
+#Remove N/A's for modeling
+LifeFinal1 = LifeFinal %>% filter(is.na(GDP) == "FALSE")
+
+#Run Model
+set.seed(1)
+train = sample(1:nrow(LifeFinal1),nrow(LifeFinal1)/2)
+life.test = LifeFinal1[-train,"Life.expectancy"]
+rf.life = randomForest(Life.expectancy~.,data = LifeFinal1,subset=train,mtry=5,importance=TRUE)
+yhat.rf=predict(rf.life,newdata = LifeFinal1[-train,])
+sqrt(mean((yhat.rf-life.test)^2))
+
+#see importance of variables
+importance(rf.life)
+varImpPlot(rf.life,main = 'Variable Importance for Life Expectancy')
+
+#See the Full Model
+rf.life
+```
+

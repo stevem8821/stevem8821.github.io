@@ -1,0 +1,14 @@
+name: "Steve Mann Portfolio"
+navbar:
+  title: "Steve Mann Portfolio"
+  left:
+    - text: "Home"
+      href: index.html
+    - text: "Attrition (knn Classification & MLR)"
+      href: AttritionProject.html
+    - text: "Beer (knn Classification & Data Vis"
+      href: BeerProject.html
+    - text: "Bank Deposits (Logistic Regression)"
+      href: BankDeposits.html
+    - text: "Life Expectancy (Random Forest)"
+      href: Life-Expectancy.html

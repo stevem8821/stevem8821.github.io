@@ -1,0 +1,957 @@
+---
+title: "Attrition Project"
+author: "Steven Mann"
+date: "8/13/2020"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Executive Summary
+## This is a presentation on predicting employee turnover in Frito Lay. An interaction between
+## Job Role & OverTime was determined to be the best indicator in predicting employee turnover rates.
+
+
+#Read in the Data
+```{r Read in Attrition Files}
+CaseStudy = read.csv(file.choose(),header=TRUE,stringsAsFactors = TRUE)
+NoAttrition = read.csv(file.choose(),header = TRUE, stringsAsFactors = TRUE)
+NoSalary = read.csv(file.choose(),header = TRUE, stringsAsFactors = TRUE)
+```
+
+#Load in the Libraries
+```{r Load Libraries}
+library(tidyverse)
+library(ggplot2)
+library(caret)
+library(e1071)
+library(leaps)
+library(stats)
+library(rsq)
+library(Metrics)
+library(kknn)
+```
+
+
+##Create factor variables out of variables brought in as integers
+```{r create factor variables}
+names <- c('RelationshipSatisfaction','PerformanceRating','WorkLifeBalance',
+           'JobInvolvement','JobSatisfaction','JobLevel','StockOptionLevel',
+           'Education','EnvironmentSatisfaction')
+
+CaseStudy[,names] <- lapply(CaseStudy[,names],factor,ordered = TRUE)
+NoAttrition[,names] <- lapply(NoAttrition[,names],factor,ordered = TRUE)
+NoSalary[,names] <- lapply(NoSalary[,names],factor,ordered = TRUE)
+```
+
+#Create new variable for job OT
+```{r Job OT}
+CaseStudy <- CaseStudy %>% mutate(JobRole_OT = paste(JobRole,OverTime,sep = "_"))
+CaseStudy$JobRole_OT = as.factor(CaseStudy$JobRole_OT)
+NoSalary <- NoSalary %>% mutate(JobRole_OT = paste(JobRole,OverTime,sep = "_"))
+NoSalary$JobRole_OT = as.factor(NoSalary$JobRole_OT)
+```
+
+#Create categorical variable for Monthly Income based on summary statistics
+```{r Monthly Income High/Low}
+IncomeSum = summary(CaseStudy$MonthlyIncome)
+CaseStudy$MonthlyIncomeHL = as.factor(if_else(CaseStudy$MonthlyIncome <= IncomeSum[2],"Lowest",
+                                    if_else(CaseStudy$MonthlyIncome <= IncomeSum[3],"Medium/Low",
+                                            if_else(CaseStudy$MonthlyIncome <= IncomeSum[4],"Medium/High","High"))))
+```
+
+#Create a categorical variable for Monthly Income based on summary statistics
+```{r Totla Work High/Low}
+TotalWorkSum = summary(CaseStudy$TotalWorkingYears)
+CaseStudy$TotalWorkHL = as.factor(if_else(CaseStudy$TotalWorkingYears <= TotalWorkSum[2],"<=6",
+                                  if_else(CaseStudy$TotalWorkingYears <= TotalWorkSum[3],"6< <=10",
+                                          if_else(CaseStudy$TotalWorkingYears <= TotalWorkSum[5],"10< <=15",">15"))))
+```
+
+```{r create case study clean for models}
+CaseStudyClean <- CaseStudy[,c("Attrition","JobRole_OT","MonthlyIncomeHL","JobInvolvement","WorkLifeBalance","TotalWorkHL",
+                            "JobLevel","StockOptionLevel","MaritalStatus","Gender")]
+```
+
+##Pie chart for overall attrition rate
+```{r JobRole_OT Baseline Chart}
+data <- data.frame(a=CaseStudy$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Overall",fill = "Attrition")
+```
+
+#Split into Job Involvement Subsets for Plotting
+```{r Job Involvement}
+Involvement1 = CaseStudy %>% filter(JobInvolvement == 1)
+Involvement2 = CaseStudy %>% filter(JobInvolvement == 2)
+Involvement3 = CaseStudy %>% filter(JobInvolvement == 3)
+Involvement4 = CaseStudy %>% filter(JobInvolvement == 4)
+
+#Plot Pie chart for Job Involvement = 1
+data <- data.frame(a=Involvement1$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Job Involvement = 1",fill = "Attrition")
+
+#Plot Pie chart for Job Involvement = 2
+data <- data.frame(a=Involvement2$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Job Involvement = 2",fill = "Attrition")
+
+#Plot Pie chart for Job Involvement = 3
+data <- data.frame(a=Involvement3$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Job Involvement = 3",fill = "Attrition")
+
+#Plot Pie chart for Job Involvement = 4
+data <- data.frame(a=Involvement4$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Job Involvement = 4",fill = "Attrition")
+```
+
+#Split into Job Level Subsets for Plotting
+```{r Job Level Data}
+Level1 = CaseStudy %>% filter(JobLevel == 1)
+Level2 = CaseStudy %>% filter(JobLevel == 2)
+Level3 = CaseStudy %>% filter(JobLevel == 3)
+Level4 = CaseStudy %>% filter(JobLevel == 4)
+Level5 = CaseStudy %>% filter(JobLevel == 5)
+
+#Plot Pie chart for Job Level = 1
+data <- data.frame(a=Level1$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Job Level = 1",fill = "Attrition")
+
+#Plot Pie chart for Job Level = 2
+data <- data.frame(a=Level2$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Job Level = 2",fill = "Attrition")
+
+#Plot Pie chart for Job Level = 3
+data <- data.frame(a=Level3$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Job Level = 3",fill = "Attrition")
+
+#Plot Pie chart for Job Level = 4
+data <- data.frame(a=Level4$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Job Level = 4",fill = "Attrition")
+
+#Plot Pie chart for Job Level = 5
+data <- data.frame(a=Level5$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Job Level = 5",fill = "Attrition")
+```
+
+##JobRole_OT Data
+```{r JobRole_OT}
+#Split into Job ROle Subsets for Plotting
+Healthcare = CaseStudy %>% filter(JobRole == "Healthcare Representative")
+HRRole = CaseStudy %>% filter(JobRole == "Human Resources")
+Lab = CaseStudy %>% filter(JobRole == "Laboratory Technician")
+Manager = CaseStudy %>% filter(JobRole == "Manager")
+Manu = CaseStudy %>% filter(JobRole == "Manufacturing Director")
+ResearchDirector = CaseStudy %>% filter(JobRole == "Research Director")
+ResearchScientist = CaseStudy %>% filter(JobRole == "Research Scientist")
+SalesExec = CaseStudy %>% filter(JobRole == "Sales Executive")
+SalesRep = CaseStudy %>% filter(JobRole == "Sales Representative")
+
+#Split into Overtime Status Subsets for Plotting
+NOOT = CaseStudy %>% filter(OverTime == "No")
+OT = CaseStudy %>% filter(OverTime == "Yes")
+
+#Split into Job ROle & OT Status Subsets for Plotting
+HealthcareOT = CaseStudy %>% filter(JobRole_OT == "Healthcare Representative_Yes")
+HealthcareNOOT = CaseStudy %>% filter(JobRole_OT == "Healthcare Representative_No")
+HRRoleOT = CaseStudy %>% filter(JobRole_OT == "Human Resources_Yes")
+HRRoleNOOT = CaseStudy %>% filter(JobRole_OT == "Human Resources_No")
+LabOT = CaseStudy %>% filter(JobRole_OT == "Laboratory Technician_Yes")
+LabNOOT = CaseStudy %>% filter(JobRole_OT == "Laboratory Technician_No")
+ManagerOT = CaseStudy %>% filter(JobRole_OT == "Manager_Yes")
+ManagerNOOT = CaseStudy %>% filter(JobRole_OT == "Manager_No")
+ManuOT = CaseStudy %>% filter(JobRole_OT == "Manufacturing Director_Yes")
+ManuNOOT = CaseStudy %>% filter(JobRole_OT == "Manufacturing Director_No")
+ResearchDirectorOT = CaseStudy %>% filter(JobRole_OT == "Research Director_Yes")
+ResearchDirectorNOOT = CaseStudy %>% filter(JobRole_OT == "Research Director_No")
+ResearchScientistOT = CaseStudy %>% filter(JobRole_OT == "Research Scientist_Yes")
+ResearchScientistNOOT = CaseStudy %>% filter(JobRole_OT == "Research Scientist_No")
+SalesExecOT = CaseStudy %>% filter(JobRole_OT == "Sales Executive_Yes")
+SalesExecNOOT = CaseStudy %>% filter(JobRole_OT == "Sales Executive_No")
+SalesRepOT = CaseStudy %>% filter(JobRole_OT == "Sales Representative_Yes")
+SalesRepNOOT = CaseStudy %>% filter(JobRole_OT == "Sales Representative_No")
+
+#Plot Pie charts for Healthcare 
+#OT
+data <- data.frame(a=HealthcareOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Overtime Healthcare",fill = "Attrition")
+
+#No OT
+data <- data.frame(a=HealthcareNOOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Non-Overtime Healthcare",fill = "Attrition")
+
+#Plot Pie charts for HR 
+#OT
+data <- data.frame(a=HRRoleOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Overtime Human Resources",fill = "Attrition")
+
+#No OT
+data <- data.frame(a=HRRoleNOOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Non-Overtime Human Resources",fill = "Attrition")
+
+#Plot Pie charts for Lab Tech 
+#OT
+data <- data.frame(a=LabOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Overtime Lab Tech",fill = "Attrition")
+
+#No OT
+data <- data.frame(a=LabNOOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Non-Overtime Lab Tech",fill = "Attrition")
+
+#Plot Pie charts for Manager 
+#OT
+data <- data.frame(a=ManagerOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Overtime Manager",fill = "Attrition")
+
+#No OT
+data <- data.frame(a=ManagerNOOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Non-Overtime Manager",fill = "Attrition")
+
+
+#Plot Pie charts for Manufacturing Director 
+#OT
+data <- data.frame(a=ManuOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Overtime Manufacturing Director",fill = "Attrition")
+
+#No OT
+data <- data.frame(a=ManuNOOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Non-Overtime Manufacturing Director",fill = "Attrition")
+
+#Plot Pie charts for Research Director 
+#OT
+data <- data.frame(a=ResearchDirectorOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Overtime Research Director",fill = "Attrition")
+
+#No OT
+data <- data.frame(a=ResearchDirectorNOOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Non-Overtime Research Director",fill = "Attrition")
+
+#Plot Pie charts for Research Scientist
+#OT
+data <- data.frame(a=ResearchScientistOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Overtime Research Scientist",fill = "Attrition")
+
+#No OT
+data <- data.frame(a=ResearchScientistNOOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Non-Overtime Research Scientist",fill = "Attrition")
+
+#Plot Pie charts for Sales Executive
+#OT
+data <- data.frame(a=SalesExecOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Overtime Sales Executive",fill = "Attrition")
+
+#No OT
+data <- data.frame(a=SalesExecNOOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Non-Overtime Sales Executive",fill = "Attrition")
+
+#Plot Pie charts for Sales Rep
+#OT
+data <- data.frame(a=SalesRepOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Overtime Sales Rep",fill = "Attrition")
+
+#No OT
+data <- data.frame(a=SalesRepNOOT$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Non-Overtime Sales Executive",fill = "Attrition")
+```
+
+#Split into Stock Option Subsets for Plotting
+```{r Stock Option Levels}
+Options0 = CaseStudy %>% filter(StockOptionLevel == "0")
+Options1 = CaseStudy %>% filter(StockOptionLevel == "1")
+Options2 = CaseStudy %>% filter(StockOptionLevel == "2")
+Options3 = CaseStudy %>% filter(StockOptionLevel == "3")
+
+#Plot Pie chart for Stock Option Level 0
+data <- data.frame(a=Options0$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Stock Option Level = 0",fill = "Attrition")
+
+#Plot Pie chart for Stock Option Level 1
+data <- data.frame(a=Options1$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Stock Option Level = 1",fill = "Attrition")
+
+#Plot Pie chart for Stock Option Level 2
+data <- data.frame(a=Options2$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Stock Option Level = 2",fill = "Attrition")
+
+#Plot Pie chart for Stock Option Level 3
+data <- data.frame(a=Options3$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Stock Option Level = 3",fill = "Attrition")
+```
+
+```{r Marital Status}
+##Marital Status
+#Split into Marital Status Subsets for Plotting
+Divorced = CaseStudy %>% filter(MaritalStatus == "Divorced")
+Married = CaseStudy %>% filter(MaritalStatus == "Married")
+Single = CaseStudy %>% filter(MaritalStatus == "Single")
+
+#Plot Pie chart for Divorced
+data <- data.frame(a=Divorced$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Divorced",fill = "Attrition")
+
+#Plot Pie chart for Married
+data <- data.frame(a=Married$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Married",fill = "Attrition")
+
+#Plot Pie chart for Married
+data <- data.frame(a=Single$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Single",fill = "Attrition")
+```
+
+#Split into Work/Life Balance Subsets for Plotting
+```{r WorkLife Balance}
+WorkLife1 = CaseStudy %>% filter(WorkLifeBalance == 1)
+WorkLife2 = CaseStudy %>% filter(WorkLifeBalance == 2)
+WorkLife3 = CaseStudy %>% filter(WorkLifeBalance == 3)
+WorkLife4 = CaseStudy %>% filter(WorkLifeBalance == 4)
+
+#Plot Pie chart for Work Life Balance = 1
+data <- data.frame(a=WorkLife1$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Work/Life Balance = 1",fill = "Attrition")
+
+#Plot Pie chart for Work Life Balance = 2
+data <- data.frame(a=WorkLife2$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Work/Life Balance = 2",fill = "Attrition")
+
+#Plot Pie chart for Work Life Balance = 3
+data <- data.frame(a=WorkLife3$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Work/Life Balance = 3",fill = "Attrition")
+
+#Plot Pie chart for Work Life Balance = 4
+data <- data.frame(a=WorkLife4$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Work/Life Balance = 4",fill = "Attrition")
+```
+
+#Split into Gender Subsets for Plotting
+```{r Gender}
+Male = CaseStudy %>% filter(Gender == "Male")
+Female = CaseStudy %>% filter(Gender == "Female")
+
+#Plot Pie chart for Men
+data <- data.frame(a=Male$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Men",fill = "Attrition")
+
+#Plot Pie chart for Women
+data <- data.frame(a=Female$Attrition)
+data <- data %>% 
+  group_by(a) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(a))
+data$label <- scales::percent(data$per)
+ggplot(data=data)+
+  geom_bar(aes(x="", y=per, fill=a), stat="identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_void()+
+  geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  labs(title = "Attrition Rates: Women",fill = "Attrition")
+```
+
+# Monthly Income Boxplot
+```{r Monthly Income}
+CaseStudy %>% 
+  ggplot(aes(y = MonthlyIncome,fill = Attrition)) + 
+  geom_boxplot() + 
+  facet_wrap(~Attrition) +
+  labs(title = "Attrition by Monthly Income",y = "Monthly Income")
+```
+
+# Total Working Years
+```{r Total Working Years}
+CaseStudy %>% ggplot(aes(y = TotalWorkingYears,fill = Attrition)) + 
+  geom_boxplot() + 
+  facet_wrap(~Attrition) +
+  labs(title = "Attrition by Total Working Years",y = "Total Working Years")
+```
+
+
+
+##KNN
+```{r kknn}
+testmodel = train.kknn(Attrition ~ JobRole_OT + MonthlyIncomeHL + JobInvolvement + 
+                         WorkLifeBalance + TotalWorkHL + JobLevel + StockOptionLevel + 
+                         MaritalStatus + Gender,
+                       data = CaseStudy,kmax = 15,
+                       kernel = c("rectangular","triangular","epanechnikov","gaussian","rank","optimal"),scale = TRUE)
+model = train.kknn(Attrition ~ JobRole_OT + MonthlyIncomeHL + JobInvolvement + 
+                     WorkLifeBalance + TotalWorkHL + JobLevel + StockOptionLevel + 
+                     MaritalStatus + Gender,
+                   data = CaseStudy,ks = testmodel$best.parameters$k,
+                   kernel = testmodel$best.parameters$kernel,scale = TRUE)
+preds = predict(model,newdata = CaseStudy)
+CM = confusionMatrix(preds,CaseStudy$Attrition)
+CM
+```
+
+##Set up the data for the competition set
+```{r Set up No Attrition Date}
+NoAttrition[,names] <- lapply(NoAttrition[,names],factor,ordered = TRUE)
+#Create new variables for job OT & Job Gender
+NoAttrition <- NoAttrition %>% mutate(JobRole_OT = paste(JobRole,OverTime,sep = "_"))
+NoAttrition$JobRole_OT = as.factor(NoAttrition$JobRole_OT)
+
+NoAttrition$MonthlyIncomeHL = as.factor(if_else(NoAttrition$MonthlyIncome <= IncomeSum[2],"Lowest",
+                                               if_else(NoAttrition$MonthlyIncome <= IncomeSum[3],"Medium/Low",
+                                                       if_else(NoAttrition$MonthlyIncome <= IncomeSum[4],"Medium/High","High"))))
+
+NoAttrition$TotalWorkHL = as.factor(if_else(NoAttrition$TotalWorkingYears <= TotalWorkSum[2],"<=6",
+                                           if_else(NoAttrition$TotalWorkingYears <= TotalWorkSum[3],"6< <=10",
+                                                   if_else(NoAttrition$TotalWorkingYears <= TotalWorkSum[5],"10< <=15",">15"))))
+```
+
+## Run predictions on the competition set using kknn
+```{r kknn on competition set}
+testmodel = train.kknn(Attrition ~ JobRole_OT + MonthlyIncomeHL + JobInvolvement + 
+                         WorkLifeBalance + TotalWorkHL + JobLevel + StockOptionLevel + 
+                         MaritalStatus + Gender,
+                       data = CaseStudy,kmax = 25,
+                       kernel = c("rectangular","triangular","epanechnikov","gaussian","rank","optimal"),scale = TRUE)
+model = train.kknn(Attrition ~ JobRole_OT + MonthlyIncomeHL + JobInvolvement + 
+                     WorkLifeBalance + TotalWorkHL + JobLevel + StockOptionLevel + 
+                     MaritalStatus + Gender,
+                   data = CaseStudy,ks = testmodel$best.parameters$k,
+                   kernel = testmodel$best.parameters$kernel,scale = TRUE)
+NoAttrition$predictions = predict(model,newdata = NoAttrition)
+```
+
+##Write the data to a csv for submission
+```{r write csv}
+NoAttritionSubmit = NoAttrition[,c("ID","predictions")]
+path_out = "C:\\Users\\Steve Mann\\OneDrive\\Desktop\\"
+write.csv(NoAttritionSubmit,"C:\\Users\\Steve Mann\\OneDrive\\Desktop\\Case2PredictionsMann_Attrition.csv")
+```
+
+##Write a model to predict Monthly Income.
+##Model was adjusted manually by stepwise regression. It is likely there are other variables
+##or ineraction variables that would be considered significant, however, as the mean RMSE on 
+##1000 iterations of 70/30 train/test split is ~1000, I decided to stop.
+```{r MLR, include=FALSE}
+CaseStudyRegression <- glm(formula = CaseStudy$MonthlyIncome ~ CaseStudy$OverTime + CaseStudy$TotalWorkingYears + CaseStudy$JobRole_OT + CaseStudy$JobLevel,data = CaseStudy)
+summary(CaseStudyRegression)
+
+CaseStudy$PredictedMonthly = predict(CaseStudyRegression)
+rmse(CaseStudy$MonthlyIncome,CaseStudy$PredictedMonthly)
+rsq(CaseStudyRegression,adj = TRUE)
+
+##Loop to ensure good RMSE & no overfit
+iterations = 500
+RootMSE = matrix(nrow = iterations)
+R_Square = matrix(nrow = iterations)
+for(j in 1:iterations)
+{
+  
+  data <- CaseStudy[,c("MonthlyIncome","OverTime","TotalWorkingYears","JobRole_OT","JobLevel")]
+  Training_obs <- data$MonthlyIncome %>% createDataPartition(p = 0.7,list = FALSE)
+  train <- data[Training_obs,]
+  test <- data[-Training_obs,]
+  model <- lm(MonthlyIncome ~ .,data = train)
+  test$predictions <- model %>% predict(test)
+  RootMSE[j] = rmse(test$predictions,test$MonthlyIncome)
+  R_Square[j] = R2(test$predictions,test$MonthlyIncome)
+}
+```
+
+#Summary statistics of model
+```{r Model Summary}
+summary(model)
+MeanRMSE = colMeans(RootMSE)
+MeanR_Square = colMeans(R_Square)
+MeanRMSE
+MeanR_Square
+```
+
+```{r Salary Predictions for Submission}
+NoSalary
+newdata <- NoSalary[,c("OverTime","TotalWorkingYears","JobRole_OT","JobLevel")]
+model <- lm(MonthlyIncome ~ .,data = data)
+newdata$predictions <- model %>% predict(newdata)
+newdata$ID = NoSalary$ID
+newdata_submit = newdata[,c("ID","predictions")]
+path_out = "C:\\Users\\Steve Mann\\OneDrive\\Desktop\\"
+write.csv(newdata_submit,"C:\\Users\\Steve Mann\\OneDrive\\Desktop\\Case2PredictionsMann_Salary.csv")
+newdata_submit
+```
+

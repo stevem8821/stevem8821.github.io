@@ -1,0 +1,199 @@
+---
+title: "Bank Deposit Predictions Using Logistic Regression"
+author: "Steven Mann"
+date: "12/6/2020"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Read in Bank Files & Load Libraries}
+#Read in the data
+##We know that this data is already clean
+Bank = read.csv(file.choose(),header = TRUE, sep = ";",stringsAsFactors = TRUE)
+
+#Load Libraries
+library(ggplot2)
+library(tidyverse)
+library(vcd)
+library(GGally)
+library(epitools)
+library(MASS)
+library(car)
+library(glmnet)
+library(ROCR)
+library(regclass)
+library(ResourceSelection)
+library(varhandle)
+library(broom)
+library(pROC)
+```
+
+```{r Make 80/20 train/test sets}
+set.seed(1234)
+index<-sample(1:41188,32950,replace=FALSE)
+test<-Bank[-index,]
+train<-Bank[index,]
+```
+
+```{r Stepwise regression model to determine statistically significant items}
+full.log<-glm(y~.,family="binomial",data=train)
+step.log<-full.log %>% stepAIC(trace=FALSE)
+summary(step.log)
+```
+
+```{r Pare down the model using intuition to retain a highly interpretable, yet accurate model}
+simple.log<-glm(y~poutcome + duration + cons.price.idx + emp.var.rate + contact + euribor3m,family="binomial",data=train)
+summary(simple.log)
+```
+
+```{r raise coefficients to e for interpretability & create confidence interval}
+e = 2.71828
+e^simple.log$coefficients
+
+#confint
+exp(cbind("Odds ratio" = coef(simple.log), confint.default(simple.log, level = 0.95)))
+```
+
+```{r Make predictions on the test set}
+fit.pred.simple<-predict(simple.log,newdata=test,type="response")
+```
+
+```{r Create Confusion matrix & tweak cutoff threshold} 
+cutoff<-0.12
+class.simple<-factor(ifelse(fit.pred.simple>cutoff,"Yes","No"),levels=c("No","Yes"))
+conf.simple<-table(class.simple,test$y)
+print("Confusion matrix for Simple Model")
+conf.simple
+```
+
+```{r Accuracy, Sensitivity, Specificity Metrics}
+Accuracy = (conf.simple[1,1] + conf.simple[2,2]) / (conf.simple[1,1] + conf.simple[1,2] + conf.simple[2,1] + conf.simple[2,2])
+Sensitivity = conf.simple[1,1] / (conf.simple[1,1] + conf.simple[2,1])
+Specificity = conf.simple[2,2] / (conf.simple[2,2] + conf.simple[1,2])
+Accuracy
+Sensitivity
+Specificity
+```
+
+```{r ROC Curve}
+roc(train$y, as.vector(fitted.values(simple.log)), percent=T, plot=TRUE, 
+    grid=TRUE, legacy.axes = TRUE, reuse.auc = TRUE,
+    print.auc = TRUE, main = paste("Simple Logistic Regression ROC curve"))
+```
+
+```{r Diagnostics}
+#Hosmer Lemeshaw
+hoslem.test(simple.log$y,fitted(simple.log))
+
+#Cook's D
+plot(simple.log, which = 4, id.n = 3)
+
+model.data <- augment(simple.log) %>% 
+  mutate(index = 1:n()) 
+
+model.data %>% top_n(3, .cooksd)
+
+ggplot(model.data, aes(index, .std.resid)) + 
+  geom_point(aes(color = y), alpha = .5) +
+  theme_bw()
+
+model.data %>% 
+  filter(abs(.std.resid) > 3)
+
+#VIF
+vif(simple.log)
+```
+
+```{r Rerun model without influential observations}
+BankCooks = Bank %>% slice(-c(24005,24092,36044))
+set.seed(1234)
+index<-sample(1:41185,30889,replace=FALSE)
+Cooktest<-BankCooks[-index,]
+Cooktrain<-BankCooks[index,]
+
+#Logistic Regression with Influential Points Removed
+Cook.simple.log<-glm(y~poutcome + duration + cons.price.idx + emp.var.rate + 
+                       contact + euribor3m,family="binomial",data=Cooktrain)
+summary(Cook.simple.log)
+```
+
+
+#Complex Model
+
+```{r New Variable Creation}
+Bank2 = Bank
+Bank2$age2 = Bank2$age^2
+Bank2$rootage = sqrt(Bank2$age)
+Bank2$duration2 = Bank2$duration^2
+Bank2$rootdruation = sqrt(Bank2$duration)
+Bank2$campaign2 = Bank2$campaign^2
+Bank2$rootcampaign = sqrt(Bank2$campaign)
+Bank2$pdays2 = Bank2$pdays^2
+Bank2$rootpdays = sqrt(Bank2$pdays)
+Bank2$previous2 = Bank2$previous^2
+Bank2$rootprevious = sqrt(Bank2$previous)
+Bank2$emp.var.rate2 = Bank2$emp.var.rate^2
+Bank2$cons.conf.idx2 = Bank2$cons.conf.idx^2
+Bank2$cons.price.idx = Bank2$cons.price.idx^2
+Bank2$root.cons.price.idx = sqrt(Bank2$cons.price.idx)
+Bank2$euribor3m2 = Bank2$euribor3m^2
+Bank2$rooteuribor3m = sqrt(Bank2$euribor3m)
+Bank2$nr.employed2 = Bank2$nr.employed^2
+Bank2$root.nr.employed = sqrt(Bank2$nr.employed)
+Bank2$emp.var.cons.price.euribor = Bank2$emp.var.rate * Bank2$cons.price.idx * Bank2$euribor3m
+Bank2$logcampaign = log(Bank2$campaign)
+Bank2$logcons.price.idx = log(Bank2$cons.price.idx)
+Bank2$logeuribor3m = log(Bank2$euribor3m)
+Bank2$lognr.employed = log(Bank2$nr.employed)
+```
+
+```{r 80/20 Train/Test Split for Complex Model}
+set.seed(1234)
+index<-sample(1:41188,32950,replace=FALSE)
+test2<-Bank2[-index,]
+train2<-Bank2[index,]
+
+#model building - the researchers used manual intuition and trial and error to determine significant coefficients
+complex.log<-glm(y~education + default + contact + month + poutcome +
+                   cons.conf.idx + duration2 + rootdruation + 
+                   rootpdays + emp.var.cons.price.euribor + logcampaign +
+                   logeuribor3m + lognr.employed,family="binomial",data=train2)
+
+summary(complex.log)
+
+#VIF
+vif(complex.log)
+
+#confint
+exp(cbind("Odds ratio" = coef(complex.log), confint.default(complex.log, level = 0.95)))
+```
+
+```{r Predictions on Test Set}
+fit.pred.complex<-predict(complex.log,newdata=test2,type="response")
+```
+
+```{r Adjust Cutoff to account for class imbalance and improve metrics}
+cutoff<-0.12
+class.complex<-factor(ifelse(fit.pred.complex>cutoff,"Yes","No"),levels=c("No","Yes"))
+conf.complex<-table(class.complex,test2$y)
+print("Confusion matrix for Complex Model")
+conf.complex
+Accuracy = (conf.complex[1,1] + conf.complex[2,2]) / (conf.complex[1,1] + conf.complex[1,2] + conf.complex[2,1] + conf.complex[2,2])
+Sensitivity = conf.complex[1,1] / (conf.complex[1,1] + conf.complex[2,1])
+Specificity = conf.complex[2,2] / (conf.complex[2,2] + conf.complex[1,2])
+Accuracy
+Sensitivity
+Specificity
+```
+
+```{r ROC Curves}
+roc(train2$y, as.vector(fitted.values(complex.log)), percent=T, plot=TRUE, 
+    grid=TRUE, legacy.axes = TRUE, reuse.auc = TRUE,
+       print.auc = TRUE, main = paste("Complex Logistic Regression ROC curve"))
+```

@@ -1,0 +1,7 @@
+---
+title: "Steve Mann's Data Science Portfolio"
+author: "Steven Mann"
+output: html_document
+---
+
+# Hi everyone! Welcome to my data science portfolio. Please use the links above to navigate the different projects that I have completed during my time in the Masters of Science in Data Science program at Southern Methodist University. I will be graduating in December 2021.
